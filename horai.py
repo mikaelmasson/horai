@@ -523,6 +523,16 @@ def main() -> None:
         print(f"Resuming: {len(done_folders)} folder(s) already completed.\n")
 
     # ── Dump each folder ──────────────────────────────────────────────────────
+    def reconnect() -> imaplib.IMAP4_SSL:
+        """Re-establish IMAP connection with a fresh token."""
+        print("  Reconnecting...", end=" ", flush=True)
+        if args.imap:
+            conn = connect_imap(args.email, password, args.host, args.port)
+        else:
+            conn = connect_m365(args.email)
+        print("OK.")
+        return conn
+
     total_messages = 0
     for i, folder in enumerate(folders, 1):
         safe_name = (
@@ -539,16 +549,33 @@ def main() -> None:
         is_partial = args.resume and mbox_path.exists() and mbox_path.stat().st_size > 0
         label = " (resuming)" if is_partial else ""
         print(f"[{i}/{len(folders)}] {folder}...{label}", end=" ", flush=True)
-        try:
-            count = fetch_folder(imap, folder, mbox_path, resume=args.resume)
-            total_messages += count
-            print(f"{count} messages")
 
-            with open(done_marker, "a") as fh:
-                fh.write(folder + "\n")
+        for attempt in range(3):
+            try:
+                count = fetch_folder(imap, folder, mbox_path, resume=args.resume)
+                total_messages += count
+                print(f"{count} messages")
 
-        except Exception as exc:
-            print(f"ERROR: {exc}")
+                with open(done_marker, "a") as fh:
+                    fh.write(folder + "\n")
+                break
+
+            except Exception as exc:
+                exc_str = str(exc).lower()
+                is_auth_or_conn = any(k in exc_str for k in [
+                    "accesstokenexpired", "eof", "broken pipe",
+                    "connection reset", "timed out",
+                ])
+                if is_auth_or_conn and attempt < 2:
+                    print(f"\n    Connection lost ({exc})")
+                    try:
+                        imap.logout()
+                    except Exception:
+                        pass
+                    imap = reconnect()
+                else:
+                    print(f"ERROR: {exc}")
+                    break
 
     # ── Logout ────────────────────────────────────────────────────────────────
     try:
