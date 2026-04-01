@@ -34,6 +34,14 @@ pip install msal          # only needed for M365
 python horai.py --email user@company.com --name my-backup
 ```
 
+> **macOS note:** Python 3.12+ on macOS blocks global `pip install`. Use a virtual environment:
+> ```bash
+> python3 -m venv .venv
+> source .venv/bin/activate
+> pip install msal
+> python horai.py --email user@company.com --name my-backup
+> ```
+
 ---
 
 ### Usage Examples
@@ -229,6 +237,14 @@ pip install horai
 pip install msal          # uniquement pour M365
 python horai.py --email user@societe.com --name ma-sauvegarde
 ```
+
+> **Note macOS :** Python 3.12+ sous macOS bloque `pip install` en global. Utilisez un environnement virtuel :
+> ```bash
+> python3 -m venv .venv
+> source .venv/bin/activate
+> pip install msal
+> python horai.py --email user@societe.com --name ma-sauvegarde
+> ```
 
 ---
 
