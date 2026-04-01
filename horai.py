@@ -66,7 +66,8 @@ AUTHORITY = "https://login.microsoftonline.com/common"
 SCOPES = ["https://outlook.office.com/IMAP.AccessAsUser.All"]
 
 # How many message UIDs to fetch per IMAP round-trip.
-BATCH_SIZE = 100
+# 500 is a good balance between speed and memory usage.
+BATCH_SIZE = 500
 
 # Exponential back-off delays (seconds) before reconnect attempts.
 RECONNECT_DELAYS = [2, 8, 32]
@@ -332,9 +333,11 @@ def fetch_folder(
     mbox_file = mailbox.mbox(str(mbox_path))
     mbox_file.lock()
     count = 0
+    t0 = time.monotonic()
+    total = len(all_uids)
 
     try:
-        for i in range(0, len(all_uids), BATCH_SIZE):
+        for i in range(0, total, BATCH_SIZE):
             batch = all_uids[i : i + BATCH_SIZE]
             uid_set = ",".join(str(u) for u in batch)
 
@@ -345,7 +348,7 @@ def fetch_folder(
                     break
                 except (imaplib.IMAP4.abort, imaplib.IMAP4.error, ConnectionError) as exc:
                     if attempt < len(RECONNECT_DELAYS):
-                        print(f"    Retry in {delay}s ({exc})")
+                        print(f"\n    Retry in {delay}s ({exc})")
                         time.sleep(delay)
                     else:
                         raise
@@ -364,12 +367,21 @@ def fetch_folder(
                         except Exception:
                             pass
 
-            done = min(i + BATCH_SIZE, len(all_uids))
-            print(f"    {done}/{len(all_uids)}", end="\r", flush=True)
+            # Flush to disk every batch so progress isn't lost on interrupt
+            mbox_file.flush()
+
+            done = min(i + BATCH_SIZE, total)
+            elapsed = time.monotonic() - t0
+            rate = done / elapsed if elapsed > 0 else 0
+            eta = int((total - done) / rate) if rate > 0 else 0
+            eta_str = f"{eta // 60}m{eta % 60:02d}s" if eta >= 60 else f"{eta}s"
+            print(f"    {done}/{total} ({rate:.0f} msg/s, ETA {eta_str})   ", end="\r", flush=True)
     finally:
         mbox_file.unlock()
         mbox_file.close()
 
+    # Clear the progress line
+    print(f"    {total}/{total}" + " " * 30, end="\r", flush=True)
     return count
 
 
