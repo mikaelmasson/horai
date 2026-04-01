@@ -72,6 +72,9 @@ BATCH_SIZE = 500
 # Exponential back-off delays (seconds) before reconnect attempts.
 RECONNECT_DELAYS = [2, 8, 32]
 
+# Socket timeout — prevents indefinite hangs on huge messages.
+SOCKET_TIMEOUT = 120
+
 # Domain → (host, port) lookup table for common IMAP providers.
 KNOWN_SERVERS: dict[str, tuple[str, int]] = {
     "gmail.com": ("imap.gmail.com", 993),
@@ -231,7 +234,7 @@ def connect_m365(email: str) -> imaplib.IMAP4_SSL:
         os.chmod(cache_file, 0o600)
 
     token = result["access_token"]
-    imap = imaplib.IMAP4_SSL("outlook.office365.com", 993)
+    imap = imaplib.IMAP4_SSL("outlook.office365.com", 993, timeout=SOCKET_TIMEOUT)
     auth_string = f"user={email}\x01auth=Bearer {token}\x01\x01"
     imap.authenticate("XOAUTH2", lambda _: auth_string.encode())
     return imap
@@ -260,7 +263,7 @@ def connect_imap(
     if not host:
         domain = email.split("@")[-1].lower()
         host, port = KNOWN_SERVERS.get(domain, (f"imap.{domain}", 993))
-    imap = imaplib.IMAP4_SSL(host, port)
+    imap = imaplib.IMAP4_SSL(host, port, timeout=SOCKET_TIMEOUT)
     imap.login(email, password)
     return imap
 
@@ -295,25 +298,51 @@ def list_folders(imap: imaplib.IMAP4_SSL) -> list[str]:
     return sorted(folders)
 
 
+def _get_existing_uids(mbox_path: Path) -> set[int]:
+    """Extract X-IMAP-UID headers from an existing mbox file for resume.
+
+    Each message stored by fetch_folder carries an X-IMAP-UID header.
+    Reading these back lets us skip already-fetched messages on resume.
+    """
+    uids: set[int] = set()
+    if not mbox_path.exists() or mbox_path.stat().st_size == 0:
+        return uids
+    try:
+        mbox_file = mailbox.mbox(str(mbox_path))
+        for msg in mbox_file:
+            uid_header = msg.get("X-IMAP-UID")
+            if uid_header:
+                try:
+                    uids.add(int(uid_header))
+                except ValueError:
+                    pass
+        mbox_file.close()
+    except Exception:
+        pass
+    return uids
+
+
 def fetch_folder(
     imap: imaplib.IMAP4_SSL,
     folder: str,
     mbox_path: Path,
-    resume_uids: set[int] | None = None,
+    resume: bool = False,
 ) -> int:
     """Fetch all messages from one IMAP folder and append them to an mbox file.
 
     Messages are fetched in batches of BATCH_SIZE to avoid timeouts on large
     folders. Transient IMAP errors trigger exponential back-off retries.
+    Each message is tagged with an X-IMAP-UID header so that interrupted
+    dumps can be resumed at the message level.
 
     Args:
         imap: An authenticated IMAP connection.
         folder: The folder name to dump (Unicode).
         mbox_path: Destination path for the mbox file.
-        resume_uids: Set of UIDs already stored; those will be skipped.
+        resume: If True, read existing mbox and skip already-fetched UIDs.
 
     Returns:
-        Number of messages written to the mbox file.
+        Total number of messages in the mbox file (including previously fetched).
     """
     encoded_folder = _encode_modified_utf7(folder)
     status, _ = imap.select(f'"{encoded_folder}"', readonly=True)
@@ -325,19 +354,27 @@ def fetch_folder(
         return 0
 
     all_uids = [int(u) for u in data[0].split()]
-    if resume_uids:
-        all_uids = [u for u in all_uids if u not in resume_uids]
+    total_in_folder = len(all_uids)
+
+    # On resume, skip UIDs already in the partial mbox
+    skipped = 0
+    if resume:
+        existing = _get_existing_uids(mbox_path)
+        if existing:
+            skipped = len(existing)
+            all_uids = [u for u in all_uids if u not in existing]
+
     if not all_uids:
-        return 0
+        return skipped
 
     mbox_file = mailbox.mbox(str(mbox_path))
     mbox_file.lock()
-    count = 0
+    count = skipped
     t0 = time.monotonic()
-    total = len(all_uids)
+    to_fetch = len(all_uids)
 
     try:
-        for i in range(0, total, BATCH_SIZE):
+        for i in range(0, to_fetch, BATCH_SIZE):
             batch = all_uids[i : i + BATCH_SIZE]
             uid_set = ",".join(str(u) for u in batch)
 
@@ -346,7 +383,7 @@ def fetch_folder(
                 try:
                     status, raw_data = imap.uid("fetch", uid_set, "(RFC822)")
                     break
-                except (imaplib.IMAP4.abort, imaplib.IMAP4.error, ConnectionError) as exc:
+                except (imaplib.IMAP4.abort, imaplib.IMAP4.error, ConnectionError, TimeoutError, OSError) as exc:
                     if attempt < len(RECONNECT_DELAYS):
                         print(f"\n    Retry in {delay}s ({exc})")
                         time.sleep(delay)
@@ -358,10 +395,19 @@ def fetch_folder(
 
             for item in raw_data:
                 if isinstance(item, tuple) and len(item) >= 2:
+                    # Extract UID from IMAP response like b'123 (UID 456 RFC822 ...'
+                    uid_val = None
+                    if isinstance(item[0], bytes):
+                        uid_match = re.search(rb"UID\s+(\d+)", item[0])
+                        if uid_match:
+                            uid_val = int(uid_match.group(1))
+
                     raw = item[1]
                     if isinstance(raw, bytes):
                         try:
                             msg = mailbox.mboxMessage(raw)
+                            if uid_val is not None:
+                                msg["X-IMAP-UID"] = str(uid_val)
                             mbox_file.add(msg)
                             count += 1
                         except Exception:
@@ -370,18 +416,18 @@ def fetch_folder(
             # Flush to disk every batch so progress isn't lost on interrupt
             mbox_file.flush()
 
-            done = min(i + BATCH_SIZE, total)
+            done = min(i + BATCH_SIZE, to_fetch)
             elapsed = time.monotonic() - t0
             rate = done / elapsed if elapsed > 0 else 0
-            eta = int((total - done) / rate) if rate > 0 else 0
+            eta = int((to_fetch - done) / rate) if rate > 0 else 0
             eta_str = f"{eta // 60}m{eta % 60:02d}s" if eta >= 60 else f"{eta}s"
-            print(f"    {done}/{total} ({rate:.0f} msg/s, ETA {eta_str})   ", end="\r", flush=True)
+            print(f"    {skipped + done}/{total_in_folder} ({rate:.0f} msg/s, ETA {eta_str})   ", end="\r", flush=True)
     finally:
         mbox_file.unlock()
         mbox_file.close()
 
     # Clear the progress line
-    print(f"    {total}/{total}" + " " * 30, end="\r", flush=True)
+    print(f"    {total_in_folder}/{total_in_folder}" + " " * 30, end="\r", flush=True)
     return count
 
 
@@ -490,9 +536,11 @@ def main() -> None:
             print(f"[{i}/{len(folders)}] {folder} — skipped (already done)")
             continue
 
-        print(f"[{i}/{len(folders)}] {folder}...", end=" ", flush=True)
+        is_partial = args.resume and mbox_path.exists() and mbox_path.stat().st_size > 0
+        label = " (resuming)" if is_partial else ""
+        print(f"[{i}/{len(folders)}] {folder}...{label}", end=" ", flush=True)
         try:
-            count = fetch_folder(imap, folder, mbox_path)
+            count = fetch_folder(imap, folder, mbox_path, resume=args.resume)
             total_messages += count
             print(f"{count} messages")
 
