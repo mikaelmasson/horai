@@ -121,6 +121,20 @@ horai --email user@company.com --name company-backup --output /mnt/nas/backups/
 
 ---
 
+### Resilience
+
+Horai automatically handles connection issues without any configuration:
+
+- **Auto-reconnect** — if the connection drops (token expiry, network blip,
+  server reset), Horai reconnects automatically with up to 3 retries using
+  exponential back-off (2 s, 8 s, 32 s).
+- **Socket timeout** — each IMAP operation times out after 120 seconds,
+  preventing indefinite hangs on very large messages or unresponsive servers.
+- **Resume** — combined with `--resume`, you can restart a dump after any
+  failure and skip folders that were already completed.
+
+---
+
 ### Output Format
 
 The archive follows a simple, transparent structure:
@@ -334,6 +348,22 @@ horai --email user@societe.com --name sauvegarde-societe --output /mnt/nas/sauve
 | `--output` | `.` | Répertoire de destination de l'archive |
 | `--resume` | désactivé | Ignorer les dossiers déjà traités |
 | `--folders` | tous | Sauvegarder uniquement les dossiers listés |
+
+---
+
+### Résilience
+
+Horai gère automatiquement les problèmes de connexion sans aucune configuration :
+
+- **Reconnexion automatique** — si la connexion est interrompue (expiration
+  du jeton, coupure réseau, réinitialisation du serveur), Horai se reconnecte
+  automatiquement avec jusqu'à 3 tentatives en back-off exponentiel
+  (2 s, 8 s, 32 s).
+- **Timeout socket** — chaque opération IMAP expire après 120 secondes,
+  évitant les blocages indéfinis sur les très gros messages ou les serveurs
+  qui ne répondent plus.
+- **Reprise** — combiné avec `--resume`, vous pouvez relancer une sauvegarde
+  après n'importe quelle erreur en sautant les dossiers déjà traités.
 
 ---
 
