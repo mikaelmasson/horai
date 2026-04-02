@@ -172,9 +172,12 @@ Authentication happens entirely in your browser — Horai never sees your passwo
 (permissions `600`) and refreshed silently. Delete this file to force
 re-authentication.
 
-No Azure app registration or admin consent is required for personal accounts.
-For organizational accounts, your IT administrator must allow the
-`IMAP.AccessAsUser.All` permission.
+No Azure app registration or admin consent is required. Because Horai uses
+Thunderbird's client ID, it benefits from the same permissions already granted
+to Thunderbird in most organizations — it works out of the box for both
+personal and organizational accounts. In rare cases where your organization
+has explicitly blocked Thunderbird, your IT administrator would need to allow
+the `IMAP.AccessAsUser.All` permission.
 
 ---
 
@@ -381,8 +384,12 @@ de passe.
 Supprimez ce fichier pour forcer une nouvelle authentification.
 
 Aucune inscription d'application Azure ni consentement administrateur n'est
-nécessaire pour les comptes personnels. Pour les comptes organisationnels,
-votre administrateur IT doit autoriser la permission `IMAP.AccessAsUser.All`.
+nécessaire. Horai utilisant l'identifiant client de Thunderbird, il bénéficie
+des mêmes permissions déjà accordées à Thunderbird dans la plupart des
+organisations — il fonctionne directement pour les comptes personnels comme
+professionnels. Dans les rares cas où votre organisation a explicitement
+bloqué Thunderbird, votre administrateur IT devrait autoriser la permission
+`IMAP.AccessAsUser.All`.
 
 ---
 
