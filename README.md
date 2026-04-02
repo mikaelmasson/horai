@@ -206,6 +206,15 @@ the Python standard library.
 
 ---
 
+### Acknowledgments
+
+Horai relies on Thunderbird's public OAuth2 client ID for M365 authentication.
+Thanks to [Mozilla](https://www.mozilla.org/) and the
+[Thunderbird](https://www.thunderbird.net/) team for keeping email open and
+accessible — your work makes tools like this one possible.
+
+---
+
 ### License
 
 Mozilla Public License 2.0 — see [LICENSE](LICENSE).
@@ -415,6 +424,16 @@ Pour les fournisseurs autres que M365, Horai utilise le LOGIN IMAP standard.
 
 Aucune autre dépendance tierce. La gestion IMAP, mbox et des archives utilise
 exclusivement la bibliothèque standard Python.
+
+---
+
+### Remerciements
+
+Horai s'appuie sur l'identifiant client OAuth2 public de Thunderbird pour
+l'authentification M365. Merci à [Mozilla](https://www.mozilla.org/) et à
+l'équipe [Thunderbird](https://www.thunderbird.net/) de maintenir le courrier
+électronique ouvert et accessible — votre travail rend des outils comme
+celui-ci possibles.
 
 ---
 
